@@ -15,6 +15,7 @@ public class PoseService : IDisposable
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
     private readonly IObjectTable objectTable;
+    private readonly IFramework framework;
 
     // Brio IPC subscribers
     private ICallGateSubscriber<(int, int)>? brioVersionIpc;
@@ -27,11 +28,12 @@ public class PoseService : IDisposable
 
     public bool IsBrioAvailable => brioAvailable;
 
-    public PoseService(IDalamudPluginInterface pluginInterface, IPluginLog log, IObjectTable objectTable)
+    public PoseService(IDalamudPluginInterface pluginInterface, IPluginLog log, IObjectTable objectTable, IFramework framework)
     {
         this.pluginInterface = pluginInterface;
         this.log = log;
         this.objectTable = objectTable;
+        this.framework = framework;
 
         InitializeBrioIpc();
     }
@@ -80,15 +82,20 @@ public class PoseService : IDisposable
 
         try
         {
-            var gameObject = GetGameObject(objectId);
-            if (gameObject == null)
+            string? result = null;
+            framework.RunOnFrameworkThread(() =>
             {
-                log.Warning($"GameObject not found for ID: {objectId}");
-                return null;
-            }
-
-            var poseJson = getPoseJsonIpc.InvokeFunc(gameObject);
-            return poseJson;
+                var gameObject = GetGameObject(objectId);
+                if (gameObject != null)
+                {
+                    result = getPoseJsonIpc.InvokeFunc(gameObject);
+                }
+                else
+                {
+                    log.Warning($"GameObject not found for ID: {objectId}");
+                }
+            }).Wait();
+            return result;
         }
         catch (Exception ex)
         {
@@ -110,15 +117,21 @@ public class PoseService : IDisposable
 
         try
         {
-            var gameObject = GetGameObject(objectId);
-            if (gameObject == null)
+            bool result = false;
+            framework.RunOnFrameworkThread(() =>
             {
-                log.Warning($"GameObject not found for ID: {objectId}");
-                return false;
-            }
-
-            var result = setPoseJsonIpc.InvokeFunc(gameObject, poseJson, isCmpFormat);
-            log.Debug($"Set pose for object {objectId}: {result}");
+                var gameObject = GetGameObject(objectId);
+                if (gameObject != null)
+                {
+                    log.Information($"[DEBUG] Calling Brio SetPose for object {objectId}, isCmpFormat: {isCmpFormat}");
+                    result = setPoseJsonIpc.InvokeFunc(gameObject, poseJson, isCmpFormat);
+                    log.Information($"[DEBUG] Brio SetPose result: {result}");
+                }
+                else
+                {
+                    log.Warning($"GameObject not found for ID: {objectId}");
+                }
+            }).Wait();
             return result;
         }
         catch (Exception ex)
@@ -141,15 +154,20 @@ public class PoseService : IDisposable
 
         try
         {
-            var gameObject = GetGameObject(objectId);
-            if (gameObject == null)
+            bool result = false;
+            framework.RunOnFrameworkThread(() =>
             {
-                log.Warning($"GameObject not found for ID: {objectId}");
-                return false;
-            }
-
-            var result = setTransformIpc.InvokeFunc(gameObject, position, rotation, scale, additive);
-            log.Debug($"Set transform for object {objectId}: {result}");
+                var gameObject = GetGameObject(objectId);
+                if (gameObject != null)
+                {
+                    result = setTransformIpc.InvokeFunc(gameObject, position, rotation, scale, additive);
+                    log.Debug($"Set transform for object {objectId}: {result}");
+                }
+                else
+                {
+                    log.Warning($"GameObject not found for ID: {objectId}");
+                }
+            }).Wait();
             return result;
         }
         catch (Exception ex)
@@ -172,15 +190,20 @@ public class PoseService : IDisposable
 
         try
         {
-            var gameObject = GetGameObject(objectId);
-            if (gameObject == null)
+            (Vector3? Position, Quaternion? Rotation, Vector3? Scale)? result = null;
+            framework.RunOnFrameworkThread(() =>
             {
-                log.Warning($"GameObject not found for ID: {objectId}");
-                return null;
-            }
-
-            var transform = getTransformIpc.InvokeFunc(gameObject);
-            return transform;
+                var gameObject = GetGameObject(objectId);
+                if (gameObject != null)
+                {
+                    result = getTransformIpc.InvokeFunc(gameObject);
+                }
+                else
+                {
+                    log.Warning($"GameObject not found for ID: {objectId}");
+                }
+            }).Wait();
+            return result;
         }
         catch (Exception ex)
         {

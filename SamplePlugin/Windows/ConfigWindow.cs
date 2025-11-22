@@ -51,6 +51,24 @@ public class ConfigWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        
+        // Animation settings
+        ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1.0f), "Animation Settings");
+        
+        var interpolationSpeed = configuration.BoneInterpolationSpeed;
+        if (ImGui.SliderFloat("Bone Interpolation Speed", ref interpolationSpeed, 0.01f, 1.0f, "%.2f"))
+        {
+            configuration.BoneInterpolationSpeed = Math.Clamp(interpolationSpeed, 0.01f, 1.0f);
+            configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Lower = smoother but more lag\nHigher = snappier but may look jittery\nDefault: 0.30");
+        }
+
+        ImGui.Spacing();
         ImGui.TextWrapped("Note: Restart the server after changing port settings.");
     }
 }

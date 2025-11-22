@@ -18,6 +18,7 @@ public class BridgeServer : IDisposable
 {
     private readonly CharacterService characterService;
     private readonly PoseService poseService;
+    private readonly SkeletonService skeletonService;
     private readonly IPluginLog log;
     private readonly Configuration configuration;
 
@@ -29,10 +30,11 @@ public class BridgeServer : IDisposable
 
     public bool IsRunning => httpListener?.IsListening ?? false;
 
-    public BridgeServer(CharacterService characterService, PoseService poseService, Configuration configuration, IPluginLog log)
+    public BridgeServer(CharacterService characterService, PoseService poseService, SkeletonService skeletonService, Configuration configuration, IPluginLog log)
     {
         this.characterService = characterService;
         this.poseService = poseService;
+        this.skeletonService = skeletonService;
         this.configuration = configuration;
         this.log = log;
     }
@@ -301,6 +303,13 @@ public class BridgeServer : IDisposable
                     SendError(response, 405, "Method not allowed");
                 break;
 
+            case "bones":
+                if (request.HttpMethod == "POST" || request.HttpMethod == "PUT")
+                    HandleSetBones(request, response, objectId);
+                else
+                    SendError(response, 405, "Method not allowed");
+                break;
+
             case "transform":
                 if (request.HttpMethod == "GET")
                     HandleGetTransform(response, objectId);
@@ -339,7 +348,13 @@ public class BridgeServer : IDisposable
             using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
             var poseJson = reader.ReadToEnd();
 
+            log.Information($"[DEBUG] Received pose data for object {objectId}");
+            log.Information($"[DEBUG] Pose JSON length: {poseJson.Length} characters");
+            log.Information($"[DEBUG] Pose JSON preview (first 500 chars): {(poseJson.Length > 500 ? poseJson.Substring(0, 500) : poseJson)}");
+
             var success = poseService.SetPoseJson(objectId, poseJson, false);
+
+            log.Information($"[DEBUG] SetPoseJson result: {success}");
 
             var result = new { success, objectId };
             var json = JsonSerializer.Serialize(result);
@@ -355,6 +370,113 @@ public class BridgeServer : IDisposable
             log.Error(ex, "Error setting pose");
             SendError(response, 500, "Failed to set pose");
         }
+    }
+
+    private void HandleSetBones(HttpListenerRequest request, HttpListenerResponse response, ulong objectId)
+    {
+        try
+        {
+            using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
+            var bonesJson = reader.ReadToEnd();
+
+            // Check if direct method is requested via query parameter
+            var useDirect = request.QueryString["method"] == "direct";
+
+            log.Information($"[DEBUG] Received bones data for object {objectId}, length: {bonesJson.Length}, method: {(useDirect ? "direct" : "brio")}");
+            log.Information($"[DEBUG] Raw bones JSON: {(bonesJson.Length > 1000 ? bonesJson.Substring(0, 1000) : bonesJson)}");
+
+            // Parse the incoming bone data
+            var bonesData = JsonSerializer.Deserialize<Dictionary<string, BoneTransformData>>(bonesJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (bonesData == null || bonesData.Count == 0)
+            {
+                SendError(response, 400, "Invalid or empty bone data");
+                return;
+            }
+
+            log.Information($"[DEBUG] Parsed {bonesData.Count} bones: {string.Join(", ", bonesData.Keys)}");
+
+            bool success;
+
+            if (useDirect)
+            {
+                // Direct skeleton manipulation - bypasses Brio
+                var boneTransforms = new Dictionary<string, BoneTransform>();
+
+                foreach (var kvp in bonesData)
+                {
+                    boneTransforms[kvp.Key] = new BoneTransform
+                    {
+                        Position = kvp.Value.Position?.ToVector3(),
+                        Rotation = kvp.Value.Rotation?.ToQuaternion(),
+                        Scale = kvp.Value.Scale?.ToVector3()
+                    };
+                }
+
+                success = skeletonService.SetBoneTransforms(objectId, boneTransforms);
+                log.Information($"[DEBUG] Direct skeleton manipulation result: {success}");
+            }
+            else
+            {
+                // Build a minimal pose JSON with only the specified bones
+                var poseData = BuildMinimalPoseJson(bonesData);
+
+                log.Information($"[DEBUG] Built pose JSON, length: {poseData.Length}");
+                log.Information($"[DEBUG] Pose JSON preview: {(poseData.Length > 500 ? poseData.Substring(0, 500) : poseData)}");
+
+                // Apply the pose via Brio
+                success = poseService.SetPoseJson(objectId, poseData, false);
+            }
+
+            var result = new { success, objectId, bonesUpdated = bonesData.Count, method = useDirect ? "direct" : "brio" };
+            var json = JsonSerializer.Serialize(result);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            response.ContentType = "application/json";
+            response.ContentLength64 = bytes.Length;
+            response.StatusCode = success ? 200 : 400;
+            response.OutputStream.Write(bytes, 0, bytes.Length);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Error setting bones");
+            SendError(response, 500, "Failed to set bones");
+        }
+    }
+
+    private string BuildMinimalPoseJson(Dictionary<string, BoneTransformData> bones)
+    {
+        var boneEntries = new List<string>();
+
+        foreach (var kvp in bones)
+        {
+            var boneName = kvp.Key;
+            var transform = kvp.Value;
+
+            var posStr = transform.Position != null
+                ? $"{transform.Position.X:F6}, {transform.Position.Y:F6}, {transform.Position.Z:F6}"
+                : "0.000000, 0.000000, 0.000000";
+
+            var rotStr = transform.Rotation != null
+                ? $"{transform.Rotation.X:F6}, {transform.Rotation.Y:F6}, {transform.Rotation.Z:F6}, {transform.Rotation.W:F6}"
+                : "0.000000, 0.000000, 0.000000, 1.000000";
+
+            var scaleStr = transform.Scale != null
+                ? $"{transform.Scale.X:F8}, {transform.Scale.Y:F8}, {transform.Scale.Z:F8}"
+                : "1.00000000, 1.00000000, 1.00000000";
+
+            var boneEntry = $"\"{boneName}\": {{\"Position\": \"{posStr}\", \"Rotation\": \"{rotStr}\", \"Scale\": \"{scaleStr}\"}}";
+            boneEntries.Add(boneEntry);
+
+            log.Debug($"[DEBUG] Bone {boneName}: Pos={posStr}, Rot={rotStr}, Scale={scaleStr}");
+        }
+
+        var bonesJson = string.Join(", ", boneEntries);
+
+        return $"{{\"FileExtension\": \".pose\", \"TypeName\": \"Aetherblend Pose\", \"FileVersion\": 2, \"Bones\": {{{bonesJson}}}}}";
     }
 
     private void HandleGetTransform(HttpListenerResponse response, ulong objectId)
@@ -441,6 +563,32 @@ public class BridgeServer : IDisposable
         public Quaternion? Rotation { get; set; }
         public Vector3? Scale { get; set; }
         public bool Additive { get; set; } = false;
+    }
+
+    private class BoneTransformData
+    {
+        public Vec3Data? Position { get; set; }
+        public QuatData? Rotation { get; set; }
+        public Vec3Data? Scale { get; set; }
+    }
+
+    private class Vec3Data
+    {
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float Z { get; set; }
+
+        public Vector3 ToVector3() => new Vector3(X, Y, Z);
+    }
+
+    private class QuatData
+    {
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float Z { get; set; }
+        public float W { get; set; }
+
+        public Quaternion ToQuaternion() => new Quaternion(X, Y, Z, W);
     }
 
     private class StreamClient : IDisposable

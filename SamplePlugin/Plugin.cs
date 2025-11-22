@@ -3,6 +3,7 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using Dalamud.Game;
 using AetherBridge.Windows;
 using AetherBridge.Services;
 
@@ -19,6 +20,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
+    [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
 
     private const string CommandName = "/bridge";
 
@@ -31,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     // AetherBridge services
     public CharacterService CharacterService { get; init; }
     public PoseService PoseService { get; init; }
+    public SkeletonService SkeletonService { get; init; }
     public BridgeServer BridgeServer { get; init; }
 
     public Plugin()
@@ -39,9 +43,10 @@ public sealed class Plugin : IDalamudPlugin
 
         // Initialize AetherBridge services
         // Note: PoseService must be created before CharacterService
-        PoseService = new PoseService(PluginInterface, Log, ObjectTable);
+        PoseService = new PoseService(PluginInterface, Log, ObjectTable, Framework);
         CharacterService = new CharacterService(ObjectTable, ClientState, Framework, Log, PoseService);
-        BridgeServer = new BridgeServer(CharacterService, PoseService, Configuration, Log);
+        SkeletonService = new SkeletonService(ObjectTable, Framework, Log, Configuration, SigScanner, GameInterop);
+        BridgeServer = new BridgeServer(CharacterService, PoseService, SkeletonService, Configuration, Log);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);

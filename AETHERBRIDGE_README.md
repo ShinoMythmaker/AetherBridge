@@ -147,6 +147,61 @@ curl -X POST http://localhost:8765/character/123456789/transform \
   }'
 ```
 
+#### `POST http://localhost:8765/character/{objectId}/bones`
+Set bone transforms for a character. Supports two methods:
+
+**Method 1: Brio (default)** - Compatible but limited to ~1 FPS due to Brio's pose loading system:
+```bash
+curl -X POST "http://localhost:8765/character/123456789/bones" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "j_kosi": {
+      "position": {"x": 0, "y": 0, "z": 0},
+      "rotation": {"x": 0, "y": 0, "z": 0, "w": 1},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    },
+    "j_sebo_a": {
+      "position": {"x": 0, "y": 0, "z": 0},
+      "rotation": {"x": 0.1, "y": 0, "z": 0, "w": 0.995},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    }
+  }'
+```
+
+**Method 2: Direct (real-time)** - Bypasses Brio for 30+ FPS animation playback:
+```bash
+curl -X POST "http://localhost:8765/character/123456789/bones?method=direct" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "j_kosi": {
+      "position": {"x": 0, "y": 0, "z": 0},
+      "rotation": {"x": 0, "y": 0, "z": 0, "w": 1},
+      "scale": {"x": 1, "y": 1, "z": 1}
+    }
+  }'
+```
+
+Response:
+```json
+{
+  "success": true,
+  "objectId": 123456789,
+  "bonesUpdated": 2,
+  "method": "direct"
+}
+```
+
+**Direct Mode Features:**
+- Bypasses Brio's pose system for real-time performance
+- Directly manipulates FFXIV's Havok animation skeleton structures
+- Supports 30+ FPS animation playback
+- Uses `hkaPose->AccessBoneModelSpace()` for direct memory writes
+- Ideal for streaming animations from Blender
+
+**Performance Comparison:**
+- **Brio mode**: ~1 FPS max (artifacts above that)
+- **Direct mode**: 30+ FPS real-time animation
+
 ## Blender Integration
 
 This plugin is designed to work with a Blender add-on (not included) that can:
